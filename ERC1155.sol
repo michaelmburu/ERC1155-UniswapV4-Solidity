@@ -4,7 +4,7 @@ pragma solidity 0.8.17;
 interface IERC1155 {
     function safeTransformFrom(address from, address to, uint id, uint value, bytes calldata data) external;
 
-    function safeBatchTransferFrom(address from, address to, uint256 value, bytes calldata data) external;
+    function safeBatchTransferFrom(address from, address to, uint256[] calldata ids, uint256[] calldata values, bytes calldata data) external;
 
     function balanceOfBatch(address[] calldata owners, uint256[] calldata ids) external view returns (uint256[] memory);
 
@@ -35,13 +35,81 @@ contract ERC1155 is IERC1155 {
     // Mapping owner => id => balance 
     mapping(address => mapping(address => bool)) public isApprovedForAll;
 
-    function safeTransformFrom(address from, address to, uint id, uint value, bytes calldata data) external {}
+    function safeTransformFrom(address from, address to, uint id, uint value, bytes calldata data) external {
+         // Require msg.sender = from or msg.sender has approval from from
+        require(msg.sender == from || isApprovedForAll[from][msg.sender], "not approved");
 
-    function safeBatchTransferFrom(address from, address to, uint256 value, bytes calldata data) external {}
+        // Update balance of to for tokenid, if to is a contract we call callback
+        require(to != address(0), "address cannot be a zero address");
 
-    function balanceOfBatch(address[] calldata owners, uint256[] calldata ids) external view returns (uint256[] memory) {}
+        //update decrease balance of from. from => id => balance
+        //update increase balance of to. to => id => balance
+        balanceOf[from][id] -= value;
+        balanceOf[to][id] += value;
 
-    function setApprovalForAll(address operator, bool approved) external {}
+        emit TransferSingle(msg.sender, from, to, id, value);
+        
+        // Call callback if to address is a contract, cannot 
+        if(to.code.length > 0){
+            require (IERC1155TokenReceiver(to).onERC1155Received(
+                msg.sender,
+                from,
+                id,
+                value,
+                data
+            ) == IERC1155TokenReceiver.onERC1155Received.selector, "unsafe transfer to a contract address");
+        }
+    }
+
+    function safeBatchTransferFrom(address from, address to, uint256[] calldata ids, uint256[] calldata values, bytes calldata data) external {
+
+        // Require msg.sender = from or msg.sender has approval from from
+        require(msg.sender == from || isApprovedForAll[from][msg.sender], "not approved");
+
+         // Require to is not a zero address
+        require(to != address(0), "address to cannot be a zero address");
+        require(ids.length == values.length, "ids length != values length");
+        
+        // Mint multiple tokens inside
+        for(uint  i = 0; i < ids.length; i++){
+             balanceOf[from][ids[i]] -= values[i];
+            balanceOf[to][ids[i]] += values[i];
+        }
+
+        emit TransferBatch(msg.sender, from, to, ids, values);
+
+        // Call callback if to address is a contract, cannot 
+        if(to.code.length > 0){
+            require (IERC1155TokenReceiver(to).onIERC1155BatchReceived(
+                msg.sender,
+                from,
+                ids,
+                values,
+                data
+            ) == IERC1155TokenReceiver.onIERC1155BatchReceived.selector, "unsafe transfer to a contract address");
+        }
+    }
+
+    function balanceOfBatch(address[] calldata owners, uint256[] calldata ids) external view returns (uint256[] memory balances) {
+        // Check lwngth of owners and id's are the same.
+        require (owners.length == ids.length, "Owners length no equal to id's length");
+
+        //Initialise memory to length of balance
+        balances = new uint[](owners.length);
+
+        //Get the balance of owners
+        for(uint i = 0; i < owners.length; i++){
+            balances[i] = balanceOf[owners[i]][ids[i]];
+        }
+    }
+
+    function setApprovalForAll(address operator, bool approved) external {
+        // Give or revoke uprovall for upgrader
+        isApprovedForAll[msg.sender][operator] = approved;
+
+        //Emit event
+        emit ApprovalForAll(msg.sender, operator, approved);
+    }
 
     //Tell other contracts that it supports the following interfaces
     function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
